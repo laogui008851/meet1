@@ -70,10 +70,11 @@ export async function verifyPoolCode(
   // 检查是否已在使用中
   if (info.in_use && info.in_use_since) {
     const since = new Date(info.in_use_since as string);
-    const timeout = (info.expires_minutes as number) || 1440;
+    // 心跳超时 5 分钟自动释放（活跃会话每60秒心跳刷新 in_use_since）
+    const IN_USE_TIMEOUT_SEC = 5 * 60;
     const elapsed = (Date.now() - since.getTime()) / 1000;
 
-    if (elapsed >= timeout * 60) {
+    if (elapsed >= IN_USE_TIMEOUT_SEC) {
       // 超时自动释放
       await sql`
         UPDATE auth_code_pool
@@ -119,6 +120,21 @@ export async function releasePoolCodeUse(code: string) {
     UPDATE auth_code_pool
     SET in_use = 0, in_use_since = NULL, bound_room = NULL
     WHERE code = ${code}
+  `;
+
+  return true;
+}
+
+/**
+ * 心跳更新：刷新 in_use_since 时间戳，防止活跃会话被误释放
+ */
+export async function updateHeartbeat(code: string) {
+  const sql = getDb();
+
+  await sql`
+    UPDATE auth_code_pool
+    SET in_use_since = NOW()
+    WHERE code = ${code} AND in_use = 1
   `;
 
   return true;
@@ -193,7 +209,7 @@ export async function getUserAssignedCodes(telegramId: number) {
 }
 
 /**
- * 清理超时的 in_use 会话
+ * 清理超时的 in_use 会话（5分钟无心跳自动释放）
  */
 export async function cleanupExpiredSessions() {
   const sql = getDb();
@@ -203,7 +219,7 @@ export async function cleanupExpiredSessions() {
     SET in_use = 0, in_use_since = NULL, bound_room = NULL
     WHERE in_use = 1
       AND in_use_since IS NOT NULL
-      AND EXTRACT(EPOCH FROM (NOW() - in_use_since)) >= expires_minutes * 60
+      AND EXTRACT(EPOCH FROM (NOW() - in_use_since)) >= 300
   `;
 
   return result.length;

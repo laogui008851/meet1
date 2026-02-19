@@ -140,15 +140,59 @@ function VideoConferenceComponent(props: {
   }, []);
 
   const router = useRouter();
-  const handleOnLeave = React.useCallback(() => {
-    // 离开房间时通知后端释放授权码
-    if (props.connectionDetails) {
-      const leaveUrl = new URL('/api/leave', window.location.origin);
-      leaveUrl.searchParams.append('authCode', new URLSearchParams(window.location.search).get('authCode') || '');
-      fetch(leaveUrl.toString()).catch(() => {});
+
+  // 获取 authCode 用于 leave / heartbeat
+  const authCodeRef = React.useRef(
+    new URLSearchParams(window.location.search).get('authCode') || '',
+  );
+
+  // 用 sendBeacon 可靠释放授权码（即使页面正在关闭也能发出）
+  const sendLeaveBeacon = React.useCallback(() => {
+    const code = authCodeRef.current;
+    if (!code) return;
+    const body = JSON.stringify({ authCode: code });
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon('/api/leave', new Blob([body], { type: 'application/json' }));
+    } else {
+      fetch('/api/leave', {
+        method: 'POST',
+        body,
+        headers: { 'Content-Type': 'application/json' },
+        keepalive: true,
+      }).catch(() => {});
     }
+  }, []);
+
+  const handleOnLeave = React.useCallback(() => {
+    sendLeaveBeacon();
     router.push('/');
-  }, [router, props.connectionDetails]);
+  }, [router, sendLeaveBeacon]);
+
+  // beforeunload / pagehide → 用 sendBeacon 释放授权码
+  React.useEffect(() => {
+    const onUnload = () => sendLeaveBeacon();
+    window.addEventListener('beforeunload', onUnload);
+    window.addEventListener('pagehide', onUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onUnload);
+      window.removeEventListener('pagehide', onUnload);
+    };
+  }, [sendLeaveBeacon]);
+
+  // 心跳：每60秒刷新 in_use_since，防止活跃会议被误判超时
+  React.useEffect(() => {
+    const code = authCodeRef.current;
+    if (!code) return;
+    const interval = setInterval(() => {
+      fetch('/api/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ authCode: code }),
+      }).catch(() => {});
+    }, 60_000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleError = React.useCallback((error: Error) => {
     console.error(error);
     alert('遇到错误: ' + error.message);
