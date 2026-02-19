@@ -1,2 +1,1 @@
-public/background-images/*.jpg filter=lfs diff=lfs merge=lfs -text
 public/background-images/*.jpg !text !filter !merge !diff
