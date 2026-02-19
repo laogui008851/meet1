@@ -44,8 +44,8 @@ export async function initDatabase() {
  * 规则：
  *   1. 必须存在于 auth_code_pool
  *   2. status = 'assigned'（已被某用户购买）
- *   3. 一码一房间：使用中时只能加入已绑定的房间
- *   4. 多人可用同一授权码进入同一房间
+ *   3. 一码一房间：授权码绑定房间后，房间未关闭不能开第2个房间
+ *   4. 同一房间内多人可用同一授权码进入
  */
 export async function verifyPoolCode(
   code: string,
@@ -81,11 +81,13 @@ export async function verifyPoolCode(
         WHERE pool_id = ${info.pool_id}
       `;
     } else {
-      // 未超时：检查房间名是否匹配
+      // 未超时：已绑定房间，只允许进同一个房间
       const bound = info.bound_room as string | null;
       if (bound && roomName && roomName !== bound) {
-        return { valid: false, reason: '该授权码已在使用中' };
+        return { valid: false, reason: `该授权码已绑定房间「${bound}」，请先退出后再加入其他房间` };
       }
+      // 同一房间 → 放行，不再重复标记
+      return { valid: true, data: info as Record<string, unknown> };
     }
   }
 
