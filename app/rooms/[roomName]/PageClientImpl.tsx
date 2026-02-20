@@ -194,14 +194,65 @@ function VideoConferenceComponent(props: {
   }, []);
 
   const [usingFallback, setUsingFallback] = React.useState(false);
+  const [reconnecting, setReconnecting] = React.useState(false);
 
   const handleError = React.useCallback((error: Error) => {
     console.error(error);
     alert('遇到错误: ' + error.message);
   }, []);
 
+  // 连接到指定服务器（主/备用）
+  const connectToServer = React.useCallback(
+    async (url: string, token: string, label: string) => {
+      console.log(`[LiveKit] 正在连接${label}:`, url);
+      await room.connect(url, token, connectOptions);
+      console.log(`[LiveKit] ✅ ${label}连接成功`);
+    },
+    [room, connectOptions],
+  );
+
+  // 尝试切换到备用服务器
+  const switchToFallback = React.useCallback(async () => {
+    const { fallbackServerUrl, fallbackParticipantToken } = props.connectionDetails;
+    if (!fallbackServerUrl || !fallbackParticipantToken || usingFallback) return false;
+
+    try {
+      setReconnecting(true);
+      // 先断开当前连接
+      await room.disconnect(true);
+      await connectToServer(fallbackServerUrl, fallbackParticipantToken, '备用服务器');
+      setUsingFallback(true);
+      setReconnecting(false);
+      // 重新开启摄像头和麦克风
+      room.localParticipant.setCameraEnabled(true).catch(handleError);
+      room.localParticipant.setMicrophoneEnabled(true).catch(handleError);
+      return true;
+    } catch (err) {
+      console.error('[LiveKit] ❌ 备用服务器也连接失败:', err);
+      setReconnecting(false);
+      return false;
+    }
+  }, [room, props.connectionDetails, usingFallback, connectToServer, handleError]);
+
   React.useEffect(() => {
-    room.on(RoomEvent.Disconnected, handleOnLeave);
+    // 会中断线处理：主服务器断线时自动切备用
+    const handleDisconnect = async () => {
+      const { fallbackServerUrl, fallbackParticipantToken } = props.connectionDetails;
+
+      // 如果当前在主服务器、且有备用线路可用 → 自动切换
+      if (!usingFallback && fallbackServerUrl && fallbackParticipantToken) {
+        console.warn('[LiveKit] ⚠️ 主服务器断线，正在自动切换到备用服务器...');
+        const ok = await switchToFallback();
+        if (ok) {
+          console.log('[LiveKit] ✅ 已自动切换到备用服务器');
+          return; // 切换成功，不跳转
+        }
+      }
+      // 备用也断了 或 已在备用上断线 → 正常离开
+      handleOnLeave();
+    };
+
+    room.on(RoomEvent.Disconnected, handleDisconnect);
     room.on(RoomEvent.MediaDevicesError, handleError);
 
     const connectWithFallback = async () => {
@@ -209,19 +260,13 @@ function VideoConferenceComponent(props: {
         props.connectionDetails;
 
       try {
-        // 尝试连接主服务器
-        console.log('[LiveKit] 正在连接主服务器:', serverUrl);
-        await room.connect(serverUrl, participantToken, connectOptions);
-        console.log('[LiveKit] ✅ 主服务器连接成功');
+        await connectToServer(serverUrl, participantToken, '主服务器');
       } catch (primaryError) {
         console.warn('[LiveKit] ❌ 主服务器连接失败:', primaryError);
 
-        // 如果有备用服务器，自动切换
         if (fallbackServerUrl && fallbackParticipantToken) {
           try {
-            console.log('[LiveKit] 🔄 正在切换到备用服务器:', fallbackServerUrl);
-            await room.connect(fallbackServerUrl, fallbackParticipantToken, connectOptions);
-            console.log('[LiveKit] ✅ 备用服务器连接成功');
+            await connectToServer(fallbackServerUrl, fallbackParticipantToken, '备用服务器');
             setUsingFallback(true);
           } catch (fallbackError) {
             console.error('[LiveKit] ❌ 备用服务器也连接失败:', fallbackError);
@@ -234,7 +279,6 @@ function VideoConferenceComponent(props: {
         }
       }
 
-      // 连接成功，开启摄像头和麦克风
       room.localParticipant.setCameraEnabled(true).catch(handleError);
       room.localParticipant.setMicrophoneEnabled(true).catch(handleError);
     };
@@ -242,7 +286,7 @@ function VideoConferenceComponent(props: {
     connectWithFallback();
 
     return () => {
-      room.off(RoomEvent.Disconnected, handleOnLeave);
+      room.off(RoomEvent.Disconnected, handleDisconnect);
       room.off(RoomEvent.MediaDevicesError, handleError);
     };
   }, [room, props.connectionDetails]);
@@ -257,6 +301,41 @@ function VideoConferenceComponent(props: {
 
   return (
     <div className="lk-room-container">
+      {reconnecting && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 9999,
+            background: 'rgba(255, 165, 0, 0.9)',
+            color: '#fff',
+            textAlign: 'center',
+            padding: '8px',
+            fontSize: '14px',
+          }}
+        >
+          🔄 主服务器断线，正在自动切换到备用服务器...
+        </div>
+      )}
+      {usingFallback && !reconnecting && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            right: 10,
+            zIndex: 9999,
+            background: 'rgba(0,0,0,0.6)',
+            color: '#ffa500',
+            padding: '4px 10px',
+            borderRadius: '0 0 6px 6px',
+            fontSize: '12px',
+          }}
+        >
+          ⚡ 备用线路
+        </div>
+      )}
       <RoomContext.Provider value={room}>
         <KeyboardShortcuts />
         <VideoConference
