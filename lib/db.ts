@@ -91,9 +91,9 @@ export async function verifyPoolCode(
       }
       
       // 如果是不同房间 → 拒绝（一码不能同时开多个房间）
-      return { 
-        valid: false, 
-        reason: `该授权码正在房间「${bound}」中使用，不能同时开启其他房间` 
+      return {
+        valid: false,
+        reason: '授权码正在使用中，不能同时开启其他房间',
       };
     }
   }
