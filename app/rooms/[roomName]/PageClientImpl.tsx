@@ -299,6 +299,38 @@ function VideoConferenceComponent(props: {
     }
   }, [lowPowerMode]);
 
+  // 自定义聊天消息编码器：发送时使用 JSON 格式（兼容 Flutter APK）
+  const chatMessageEncoder = React.useCallback((message: string) => {
+    const encoder = new TextEncoder();
+    const messageJson = JSON.stringify({
+      id: `${Date.now()}-${room.localParticipant.identity}`,
+      timestamp: Date.now(),
+      message: message,
+      ignoreLegacy: true,
+    });
+    console.log('✅ 发送 JSON 消息:', message);
+    return encoder.encode(messageJson);
+  }, [room]);
+
+  // 自定义聊天消息解码器：接收时解析 JSON 格式（兼容 Flutter APK）
+  const chatMessageDecoder = React.useCallback((data: Uint8Array) => {
+    const decoder = new TextDecoder();
+    const rawText = decoder.decode(data);
+    
+    try {
+      // 尝试解析 JSON 格式
+      const jsonData = JSON.parse(rawText);
+      if (jsonData.message) {
+        console.log('📨 收到 JSON 消息:', jsonData.message);
+        return jsonData.message;
+      }
+    } catch (_) {
+      // 不是 JSON，直接返回纯文本
+      console.log('📨 收到纯文本消息:', rawText);
+    }
+    return rawText;
+  }, []);
+
   return (
     <div className="lk-room-container">
       {reconnecting && (
@@ -340,6 +372,8 @@ function VideoConferenceComponent(props: {
         <KeyboardShortcuts />
         <VideoConference
           chatMessageFormatter={formatChatMessageLinks}
+          chatMessageEncoder={chatMessageEncoder}
+          chatMessageDecoder={chatMessageDecoder}
           SettingsComponent={SHOW_SETTINGS_MENU ? SettingsMenu : undefined}
         />
       </RoomContext.Provider>
