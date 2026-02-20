@@ -11,6 +11,11 @@ const LIVEKIT_API_KEY = process.env.LIVEKIT_API_KEY || '';
 const LIVEKIT_API_SECRET = process.env.LIVEKIT_API_SECRET || '';
 const LIVEKIT_URL = process.env.LIVEKIT_URL || '';
 
+// 备用 LiveKit 配置（主服务器故障时自动切换）
+const LIVEKIT_FALLBACK_API_KEY = process.env.LIVEKIT_FALLBACK_API_KEY || '';
+const LIVEKIT_FALLBACK_API_SECRET = process.env.LIVEKIT_FALLBACK_API_SECRET || '';
+const LIVEKIT_FALLBACK_URL = process.env.LIVEKIT_FALLBACK_URL || '';
+
 export async function GET(request: NextRequest) {
   try {
     const roomName = request.nextUrl.searchParams.get('roomName');
@@ -54,11 +59,31 @@ export async function GET(request: NextRequest) {
 
     const participantToken = await at.toJwt();
 
+    // 生成备用服务器 Token（如果配置了备用服务器）
+    let fallbackServerUrl: string | undefined;
+    let fallbackParticipantToken: string | undefined;
+    if (LIVEKIT_FALLBACK_URL && LIVEKIT_FALLBACK_API_KEY && LIVEKIT_FALLBACK_API_SECRET) {
+      const fallbackAt = new AccessToken(LIVEKIT_FALLBACK_API_KEY, LIVEKIT_FALLBACK_API_SECRET, {
+        identity: participantName,
+        ttl: '24h',
+      });
+      fallbackAt.addGrant({
+        roomJoin: true,
+        room: roomName,
+        canPublish: true,
+        canSubscribe: true,
+        canPublishData: true,
+      });
+      fallbackServerUrl = LIVEKIT_FALLBACK_URL;
+      fallbackParticipantToken = await fallbackAt.toJwt();
+    }
+
     return NextResponse.json({
       serverUrl: LIVEKIT_URL,
       participantToken,
       participantName,
       roomName,
+      ...(fallbackServerUrl && { fallbackServerUrl, fallbackParticipantToken }),
     });
   } catch (error) {
     console.error('connection-details error:', error);

@@ -193,6 +193,8 @@ function VideoConferenceComponent(props: {
     return () => clearInterval(interval);
   }, []);
 
+  const [usingFallback, setUsingFallback] = React.useState(false);
+
   const handleError = React.useCallback((error: Error) => {
     console.error(error);
     alert('遇到错误: ' + error.message);
@@ -202,17 +204,42 @@ function VideoConferenceComponent(props: {
     room.on(RoomEvent.Disconnected, handleOnLeave);
     room.on(RoomEvent.MediaDevicesError, handleError);
 
-    room
-      .connect(
-        props.connectionDetails.serverUrl,
-        props.connectionDetails.participantToken,
-        connectOptions,
-      )
-      .then(() => {
-        room.localParticipant.setCameraEnabled(true).catch(handleError);
-        room.localParticipant.setMicrophoneEnabled(true).catch(handleError);
-      })
-      .catch(handleError);
+    const connectWithFallback = async () => {
+      const { serverUrl, participantToken, fallbackServerUrl, fallbackParticipantToken } =
+        props.connectionDetails;
+
+      try {
+        // 尝试连接主服务器
+        console.log('[LiveKit] 正在连接主服务器:', serverUrl);
+        await room.connect(serverUrl, participantToken, connectOptions);
+        console.log('[LiveKit] ✅ 主服务器连接成功');
+      } catch (primaryError) {
+        console.warn('[LiveKit] ❌ 主服务器连接失败:', primaryError);
+
+        // 如果有备用服务器，自动切换
+        if (fallbackServerUrl && fallbackParticipantToken) {
+          try {
+            console.log('[LiveKit] 🔄 正在切换到备用服务器:', fallbackServerUrl);
+            await room.connect(fallbackServerUrl, fallbackParticipantToken, connectOptions);
+            console.log('[LiveKit] ✅ 备用服务器连接成功');
+            setUsingFallback(true);
+          } catch (fallbackError) {
+            console.error('[LiveKit] ❌ 备用服务器也连接失败:', fallbackError);
+            handleError(new Error('所有服务器均无法连接，请稍后重试'));
+            return;
+          }
+        } else {
+          handleError(primaryError as Error);
+          return;
+        }
+      }
+
+      // 连接成功，开启摄像头和麦克风
+      room.localParticipant.setCameraEnabled(true).catch(handleError);
+      room.localParticipant.setMicrophoneEnabled(true).catch(handleError);
+    };
+
+    connectWithFallback();
 
     return () => {
       room.off(RoomEvent.Disconnected, handleOnLeave);
