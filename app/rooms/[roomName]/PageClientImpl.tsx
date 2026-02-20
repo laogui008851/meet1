@@ -9,6 +9,7 @@ import {
   RoomContext,
   VideoConference,
 } from '@livekit/components-react';
+import type { LegacyChatMessage, LegacyReceivedChatMessage } from '@livekit/components-core';
 import {
   RoomOptions,
   VideoCodec,
@@ -300,35 +301,45 @@ function VideoConferenceComponent(props: {
   }, [lowPowerMode]);
 
   // 自定义聊天消息编码器：发送时使用 JSON 格式（兼容 Flutter APK）
-  const chatMessageEncoder = React.useCallback((message: string) => {
+  const chatMessageEncoder = React.useCallback((message: LegacyChatMessage): Uint8Array => {
     const encoder = new TextEncoder();
     const messageJson = JSON.stringify({
-      id: `${Date.now()}-${room.localParticipant.identity}`,
-      timestamp: Date.now(),
-      message: message,
+      id: message.id || `${Date.now()}-${room.localParticipant.identity}`,
+      timestamp: message.timestamp || Date.now(),
+      message: message.message,
       ignoreLegacy: true,
     });
-    console.log('✅ 发送 JSON 消息:', message);
+    console.log('✅ 发送 JSON 消息:', message.message);
     return encoder.encode(messageJson);
   }, [room]);
 
   // 自定义聊天消息解码器：接收时解析 JSON 格式（兼容 Flutter APK）
-  const chatMessageDecoder = React.useCallback((data: Uint8Array) => {
+  const chatMessageDecoder = React.useCallback((data: Uint8Array): LegacyReceivedChatMessage => {
     const decoder = new TextDecoder();
     const rawText = decoder.decode(data);
-    
+
     try {
       // 尝试解析 JSON 格式
       const jsonData = JSON.parse(rawText);
       if (jsonData.message) {
         console.log('📨 收到 JSON 消息:', jsonData.message);
-        return jsonData.message;
+        return {
+          id: jsonData.id || `${Date.now()}`,
+          timestamp: jsonData.timestamp || Date.now(),
+          message: jsonData.message,
+          ignoreLegacy: true,
+        };
       }
     } catch (_) {
       // 不是 JSON，直接返回纯文本
       console.log('📨 收到纯文本消息:', rawText);
     }
-    return rawText;
+    return {
+      id: `${Date.now()}`,
+      timestamp: Date.now(),
+      message: rawText,
+      ignoreLegacy: true,
+    };
   }, []);
 
   return (
@@ -375,6 +386,12 @@ function VideoConferenceComponent(props: {
           chatMessageEncoder={chatMessageEncoder}
           chatMessageDecoder={chatMessageDecoder}
           SettingsComponent={SHOW_SETTINGS_MENU ? SettingsMenu : undefined}
+        />
+        {/* 兼容 Flutter/iOS 端的 lk-chat topic 聊天 */}
+        <Chat channelTopic="lk-chat"
+          messageFormatter={formatChatMessageLinks}
+          messageEncoder={chatMessageEncoder}
+          messageDecoder={chatMessageDecoder}
         />
       </RoomContext.Provider>
     </div>
