@@ -67,8 +67,8 @@ export async function verifyPoolCode(
     return { valid: false, reason: '授权码尚未激活（未被购买）' };
   }
 
-  // 检查是否已在使用中
-  if (info.in_use && info.in_use_since) {
+  // 检查是否已在使用中且绑定了房间
+  if (info.in_use && info.bound_room && info.in_use_since) {
     const since = new Date(info.in_use_since as string);
     // 心跳超时 5 分钟自动释放（活跃会话每60秒心跳刷新 in_use_since）
     const IN_USE_TIMEOUT_SEC = 5 * 60;
@@ -82,13 +82,19 @@ export async function verifyPoolCode(
         WHERE pool_id = ${info.pool_id}
       `;
     } else {
-      // 未超时：已绑定房间，只允许进同一个房间
-      const bound = info.bound_room as string | null;
-      if (bound && roomName && roomName !== bound) {
-        return { valid: false, reason: `该授权码已绑定房间「${bound}」，请先退出后再加入其他房间` };
+      // 未超时：已绑定房间
+      const bound = info.bound_room as string;
+      
+      // 如果是同一个房间 → 允许进入（多人可用同一授权码进同一房间）
+      if (roomName && roomName === bound) {
+        return { valid: true, data: info as Record<string, unknown> };
       }
-      // 同一房间 → 放行，不再重复标记
-      return { valid: true, data: info as Record<string, unknown> };
+      
+      // 如果是不同房间 → 拒绝（一码不能同时开多个房间）
+      return { 
+        valid: false, 
+        reason: `该授权码正在房间「${bound}」中使用，不能同时开启其他房间` 
+      };
     }
   }
 
