@@ -32,9 +32,13 @@ export async function initDatabase() {
       in_use INTEGER DEFAULT 0,
       in_use_since TIMESTAMP,
       bound_room TEXT,
-      note TEXT
+      note TEXT,
+      expires_at TIMESTAMP
     )
   `;
+
+  // 已有表补列
+  await sql`ALTER TABLE auth_code_pool ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`;
 
   return { success: true };
 }
@@ -65,6 +69,14 @@ export async function verifyPoolCode(
 
   if (info.status === 'available') {
     return { valid: false, reason: '授权码尚未激活（未被购买）' };
+  }
+
+  // 检查是否已过期（从首次开房间时开始计时）
+  if (info.expires_at) {
+    const expiresAt = new Date(info.expires_at as string);
+    if (Date.now() > expiresAt.getTime()) {
+      return { valid: false, reason: '授权码已过期' };
+    }
   }
 
   // 检查是否已在使用中且绑定了房间
@@ -103,13 +115,22 @@ export async function verifyPoolCode(
 
 /**
  * 标记授权码为使用中并绑定房间（仅首次标记）
+ * 首次开房间时启动计时：expires_at = NOW() + expires_minutes
  */
 export async function markPoolCodeInUse(code: string, roomName: string = '') {
   const sql = getDb();
 
+  // 首次使用：expires_at 为 NULL 时设置过期时间，开始计时
   await sql`
     UPDATE auth_code_pool
-    SET in_use = 1, in_use_since = NOW(), bound_room = ${roomName}
+    SET
+      in_use = 1,
+      in_use_since = NOW(),
+      bound_room = ${roomName},
+      expires_at = CASE
+        WHEN expires_at IS NULL THEN NOW() + (expires_minutes || ' minutes')::INTERVAL
+        ELSE expires_at
+      END
     WHERE code = ${code} AND in_use = 0
   `;
 
