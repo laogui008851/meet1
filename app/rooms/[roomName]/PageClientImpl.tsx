@@ -8,6 +8,7 @@ import {
   formatChatMessageLinks,
   RoomContext,
   VideoConference,
+  Chat,
 } from '@livekit/components-react';
 import type { LegacyChatMessage, LegacyReceivedChatMessage } from '@livekit/components-core';
 import {
