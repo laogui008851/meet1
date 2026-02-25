@@ -1,8 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { releasePoolCodeUse } from '@/lib/db';
+import { releasePoolCodeUse, forceReleasePoolCode } from '@/lib/db';
 
 /**
- * 用户离开房间时释放授权码（直接操作数据库）
+ * 用户离开房间时软释放授权码
+ * 不直接清 in_use，而是把 in_use_since 往前推，
+ * 如果房间还有其他人在发心跳，会自动恢复。
+ * 所有人走了 → 心跳超时后自动释放。
+ *
+ * POST 带 force=true 时强制释放（供 bot "结束会议" 按钮用）
  */
 
 export async function GET(request: NextRequest) {
@@ -28,7 +33,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: '缺少授权码' }, { status: 400 });
     }
 
-    await releasePoolCodeUse(authCode);
+    if (data.force) {
+      await forceReleasePoolCode(authCode);
+    } else {
+      await releasePoolCodeUse(authCode);
+    }
 
     return NextResponse.json({ status: 'ok' });
   } catch {

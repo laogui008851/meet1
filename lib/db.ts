@@ -104,8 +104,8 @@ export async function verifyPoolCode(
   // 检查是否已在使用中且绑定了房间
   if (info.in_use && info.bound_room && info.in_use_since) {
     const since = new Date(info.in_use_since as string);
-    // 心跳超时 5 分钟自动释放（活跃会话每60秒心跳刷新 in_use_since）
-    const IN_USE_TIMEOUT_SEC = 5 * 60;
+    // 心跳超时 10 分钟自动释放（活跃会话每60秒心跳刷新 in_use_since）
+    const IN_USE_TIMEOUT_SEC = 10 * 60;
     const elapsed = (Date.now() - since.getTime()) / 1000;
 
     if (elapsed >= IN_USE_TIMEOUT_SEC) {
@@ -161,9 +161,31 @@ export async function markPoolCodeInUse(code: string, roomName: string = '') {
 }
 
 /**
- * 释放授权码的使用状态（用户离开房间后）
+ * 软释放：某个参与者离开房间时调用
+ * 不直接清除 in_use / bound_room，而是把 in_use_since 设为一个较早的时间
+ * 如果房间里还有其他人在发心跳，心跳会把 in_use_since 刷新回来
+ * 如果所有人都走了，没人再发心跳，超时后自动释放
  */
 export async function releasePoolCodeUse(code: string) {
+  const sql = getDb();
+
+  // 把 in_use_since 往前推 8 分钟，给最后一轮心跳 2 分钟窗口
+  // 如果还有人在房间里，下一次心跳（60秒内）会刷新回来
+  // 如果所有人都走了，2 分钟后总共超过 10 分钟阈值，自动释放
+  await sql`
+    UPDATE auth_code_pool
+    SET in_use_since = NOW() - INTERVAL '8 minutes'
+    WHERE code = ${code} AND in_use = 1
+  `;
+
+  return true;
+}
+
+/**
+ * 强制释放：管理员或 bot "结束会议" 按钮专用
+ * 立即清除 in_use / bound_room
+ */
+export async function forceReleasePoolCode(code: string) {
   const sql = getDb();
 
   await sql`
@@ -176,15 +198,17 @@ export async function releasePoolCodeUse(code: string) {
 }
 
 /**
- * 心跳更新：刷新 in_use_since 时间戳，防止活跃会话被误释放
+ * 心跳更新：刷新 in_use_since 时间戳，并确保 in_use = 1
+ * 防止活跃会话被误释放（即使之前被超时释放，心跳也能恢复）
  */
 export async function updateHeartbeat(code: string) {
   const sql = getDb();
 
+  // 如果码有 bound_room，说明会议仍在进行，强制恢复 in_use = 1
   await sql`
     UPDATE auth_code_pool
-    SET in_use_since = NOW()
-    WHERE code = ${code} AND in_use = 1
+    SET in_use_since = NOW(), in_use = 1
+    WHERE code = ${code} AND bound_room IS NOT NULL
   `;
 
   return true;
@@ -260,7 +284,7 @@ export async function getUserAssignedCodes(telegramId: number) {
 }
 
 /**
- * 清理超时的 in_use 会话（5分钟无心跳自动释放）
+ * 清理超时的 in_use 会话（10分钟无心跳自动释放）
  */
 export async function cleanupExpiredSessions() {
   const sql = getDb();
@@ -270,7 +294,7 @@ export async function cleanupExpiredSessions() {
     SET in_use = 0, in_use_since = NULL, bound_room = NULL
     WHERE in_use = 1
       AND in_use_since IS NOT NULL
-      AND EXTRACT(EPOCH FROM (NOW() - in_use_since)) >= 300
+      AND EXTRACT(EPOCH FROM (NOW() - in_use_since)) >= 600
   `;
 
   return result.length;
