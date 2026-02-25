@@ -161,23 +161,15 @@ export async function markPoolCodeInUse(code: string, roomName: string = '') {
 }
 
 /**
- * 软释放：某个参与者离开房间时调用
- * 不直接清除 in_use / bound_room，而是把 in_use_since 设为一个较早的时间
- * 如果房间里还有其他人在发心跳，心跳会把 in_use_since 刷新回来
- * 如果所有人都走了，没人再发心跳，超时后自动释放
+ * 普通离开：不做任何数据库操作
+ * 码的释放完全依赖心跳超时机制：
+ *   - 每个参与者每60秒发心跳，刷新 in_use_since
+ *   - 某人离开 → 他的心跳停止
+ *   - 只要还有任何人在房间，心跳不断，码绝对不会被释放
+ *   - 所有人都走了 → 无心跳 → 10分钟后自动释放
  */
-export async function releasePoolCodeUse(code: string) {
-  const sql = getDb();
-
-  // 把 in_use_since 往前推 8 分钟，给最后一轮心跳 2 分钟窗口
-  // 如果还有人在房间里，下一次心跳（60秒内）会刷新回来
-  // 如果所有人都走了，2 分钟后总共超过 10 分钟阈值，自动释放
-  await sql`
-    UPDATE auth_code_pool
-    SET in_use_since = NOW() - INTERVAL '8 minutes'
-    WHERE code = ${code} AND in_use = 1
-  `;
-
+export async function releasePoolCodeUse(_code: string) {
+  // 故意不做任何操作，交给心跳超时处理
   return true;
 }
 
