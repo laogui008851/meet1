@@ -165,14 +165,21 @@ function VideoConferenceComponent(props: {
     }
   }, []);
 
+  // 标记是否是用户主动退出（区别于意外断线）
+  const intentionalLeaveRef = React.useRef(false);
+
   const handleOnLeave = React.useCallback(() => {
+    intentionalLeaveRef.current = true;  // 标记主动退出
     sendLeaveBeacon();
     router.push('/');
   }, [router, sendLeaveBeacon]);
 
-  // beforeunload / pagehide → 用 sendBeacon 释放授权码
+  // beforeunload / pagehide → 标记主动退出
   React.useEffect(() => {
-    const onUnload = () => sendLeaveBeacon();
+    const onUnload = () => {
+      intentionalLeaveRef.current = true;
+      sendLeaveBeacon();
+    };
     window.addEventListener('beforeunload', onUnload);
     window.addEventListener('pagehide', onUnload);
     return () => {
@@ -237,8 +244,13 @@ function VideoConferenceComponent(props: {
   }, [room, props.connectionDetails, usingFallback, connectToServer, handleError]);
 
   React.useEffect(() => {
-    // 会中断线处理：主服务器断线时自动切备用
+    // 会中断线处理：只有意外断线才切备用，主动退出直接走
     const handleDisconnect = async () => {
+      // 主动退出 → 直接离开，不切备用
+      if (intentionalLeaveRef.current) {
+        return;
+      }
+
       const { fallbackServerUrl, fallbackParticipantToken } = props.connectionDetails;
 
       // 如果当前在主服务器、且有备用线路可用 → 自动切换
