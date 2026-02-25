@@ -13,6 +13,26 @@ function getDb() {
   return neon(databaseUrl);
 }
 
+// 自动迁移标记：每次冷启动最多执行一次
+let _migrated = false;
+
+/**
+ * 确保 expires_at 列存在（自动迁移，每次冷启动只跑一次）
+ */
+async function ensureMigration() {
+  if (_migrated) return;
+  const sql = getDb();
+  try {
+    await sql`ALTER TABLE auth_code_pool ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`;
+  } catch (e: unknown) {
+    // 列已存在或表不存在时忽略
+    if (e instanceof Error && !e.message.includes('already exists')) {
+      console.warn('ensureMigration warning:', e.message);
+    }
+  }
+  _migrated = true;
+}
+
 /**
  * 初始化数据库表（首次部署时调用）
  */
@@ -39,6 +59,7 @@ export async function initDatabase() {
 
   // 已有表补列
   await sql`ALTER TABLE auth_code_pool ADD COLUMN IF NOT EXISTS expires_at TIMESTAMP`;
+  _migrated = true;
 
   return { success: true };
 }
@@ -55,6 +76,7 @@ export async function verifyPoolCode(
   code: string,
   roomName: string = '',
 ): Promise<{ valid: boolean; reason?: string; data?: Record<string, unknown> }> {
+  await ensureMigration();
   const sql = getDb();
 
   const rows = await sql`
@@ -118,6 +140,7 @@ export async function verifyPoolCode(
  * 首次开房间时启动计时：expires_at = NOW() + expires_minutes
  */
 export async function markPoolCodeInUse(code: string, roomName: string = '') {
+  await ensureMigration();
   const sql = getDb();
 
   // 首次使用：expires_at 为 NULL 时设置过期时间，开始计时
@@ -224,6 +247,7 @@ export async function createAuthCode(
  * 获取用户的授权码列表
  */
 export async function getUserAssignedCodes(telegramId: number) {
+  await ensureMigration();
   const sql = getDb();
 
   const rows = await sql`
