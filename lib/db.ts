@@ -175,18 +175,25 @@ export async function releasePoolCodeUse(_code: string) {
 
 /**
  * 强制释放：管理员或 bot "结束会议" 按钮专用
- * 立即清除 in_use / bound_room
+ * 立即清除 in_use / bound_room，并返回之前绑定的房间名（用于删除 LiveKit 房间）
  */
-export async function forceReleasePoolCode(code: string) {
+export async function forceReleasePoolCode(code: string): Promise<string | null> {
   const sql = getDb();
 
+  // 先查出绑定的房间名
+  const rows = await sql`
+    SELECT bound_room FROM auth_code_pool WHERE code = ${code}
+  `;
+  const boundRoom = (rows[0]?.bound_room as string) || null;
+
+  // 释放码
   await sql`
     UPDATE auth_code_pool
     SET in_use = 0, in_use_since = NULL, bound_room = NULL
     WHERE code = ${code}
   `;
 
-  return true;
+  return boundRoom;
 }
 
 /**
